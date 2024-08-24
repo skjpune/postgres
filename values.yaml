@@ -1,0 +1,75 @@
+replicaCount: 2
+namespace: postgres
+maxConnections: 200
+tier: db-tier
+
+pvClaim:
+  storageCapacity: 2Gi
+  accessMode: ReadWriteOnce
+  storageClass: nfs-client
+
+image:
+  name: postgres
+  pullPolicy: IfNotPresent
+  tag: "16.4"
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate: {}
+
+pod:
+  resources:
+    limits:
+      cpu: 1
+      memory: 2Gi
+    requests:
+      cpu: 1
+      memory: 1Gi
+  ports:
+   - name: tcp-pg-port
+     containerPort: 5432
+     protocol: TCP
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+    successThreshold: 1
+    exec:
+      command:
+        - "sh"
+        - "-c"
+        - "pg_isready --host $POD_IP"  
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+    successThreshold: 1
+    exec:
+      command:
+        - "sh"
+        - "-c"
+        - "pg_isready --host $POD_IP" 
+  startupProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 1
+    failureThreshold: 15
+    successThreshold: 1
+    exec:
+      command:
+        - "sh"
+        - "-c"
+        - "pg_isready --host $POD_IP"
+  securityContext:
+    runAsNonRoot: false
+    allowPrivilegeEscalation: false
+    runAsUser: 999               
+service:
+  headless:
+    type: ClusterIP
+    port: 5432
+    name: tcp-pg-port
+    targetPort: tcp-pg-port
+    protocol: TCP              

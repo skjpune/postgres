@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: 
+  name:  {{ include "postgres.stateful.name" . | quote }}
+  namespace: {{ .Values.namespace }}
+  labels: {{- include "postgres.labels" . | nindent 4 }}
+spec:
+  replicas: {{.Values.replicaCount}}
+  serviceName: {{ include "postgres.headless.service.name" . | quote }}
+  {{- if .Values.updateStrategy }}
+  updateStrategy: {{- toYaml .Values.updateStrategy | nindent 4 }}
+  {{- end }}  
+  selector:
+    matchLabels: {{- include "postgres.selectorLabels" . | nindent 6}}
+  template:
+    metadata:
+      namespace: {{ .Values.namespace }}
+      labels: {{- include "postgres.labels" . | nindent 8 }}
+    spec:
+      initContainers:
+        - name: postgres-init
+          image: "{{.Values.image.name}}:{{.Values.image.tag}}"
+          command:
+             - bash
+             - "-c"
+             - |
+               set -ex
+               [[ `hostname` =~ -([0-9]+)$ ]] || exit 1
+               ordinal=${BASH_REMATCH[1]}
+               if [[ $ordinal -eq 0 ]]; then
+                 printf "I am the primary"
+               else
+                 printf "I am a read-only replica"
+               fi
+      containers:
+        - name: {{.Chart.Name}}
+          image: "{{.Values.image.name}}:{{.Values.image.tag}}"
+          args:
+            [
+                "-c",
+                "max_connections={{.Values.maxConnections}}",
+                "-c",
+                "config_file=/etc/postgresql/postgresql.conf"
+            ]
+          imagePullPolicy: {{.Values.image.pullPolicy}}
+          {{- if .Values.pod.resources }}
+          resources: {{- toYaml .Values.pod.resources | nindent 12 }}
+          {{- end }}
+          ports: {{- toYaml .Values.pod.ports | nindent 12 }}                                 
+          {{- if .Values.pod.livenessProbe }}
+          livenessProbe: {{- toYaml .Values.pod.livenessProbe | nindent 12 }}
+          {{- end }}          
+          {{- if .Values.pod.readinessProbe }}
+          readinessProbe: {{- toYaml .Values.pod.readinessProbe | nindent 12 }}
+          {{- end }}          
+          {{- if .Values.pod.startupProbe }}
+          startupProbe: {{- toYaml .Values.pod.startupProbe | nindent 12 }}
+          {{- end }}          
+          {{- if .Values.pod.securityContext }}
+          securityContext: {{- toYaml .Values.pod.securityContext | nindent 12 }}
+          {{- end }}
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.podIP
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "postgres.secret.name" . | quote }}
+                  key: "POSTGRES_USER"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "postgres.secret.name" . | quote }}
+                  key: "POSTGRES_PASSWORD"
+            - name: PGDATA
+              value: "/var/lib/postgresql/data/pgdata"
+          volumeMounts:
+            - name: "postgres-config"
+              mountPath: "/etc/postgresql/postgresql.conf"
+              subPath: "postgresql.conf"       
+            - name: "postgres-init"
+              mountPath: "/docker-entrypoint-initdb.d/init.sh"
+              subPath: "init.sh"       
+            - name: "postgres-certs"
+              mountPath: "/certs"
+            - name: "postgres-db-data"
+              mountPath: "/var/lib/postgresql/data"
+      securityContext:
+        fsGroup: 999
+      volumes:
+        - name: "postgres-config"
+          configMap:
+            name: {{ include "postgres.configMap.name" . | quote }}
+            items:
+              - key: "postgresql.conf"
+                path: "postgresql.conf"          
+        - name: "postgres-init"
+          configMap:
+            name: {{ include "postgres.configMap.name" . | quote }}
+            items:
+              - key: "init.sh"
+                path: "init.sh"                 
+        - name: "postgres-certs"
+          secret:
+            secretName: {{ include "postgres.secret.name" . | quote }}
+            items:
+              - key: "tls.crt"
+                path: "tls.crt"                  
+              - key: "tls.key"
+                path: "tls.key"
+                mode: 0640                  
+              - key: "ca.crt"
+                path: "ca.crt"     
+  volumeClaimTemplates:
+    - metadata:
+        name: "postgres-db-data"
+      spec:
+        accessModes: [{{.Values.pvClaim.accessMode}}]
+        storageClassName: {{.Values.pvClaim.storageClass}}
+        resources:
+          requests:
+            storage: {{.Values.pvClaim.storageCapacity}}                                                              
